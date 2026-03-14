@@ -1,22 +1,52 @@
 import os
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime
 from insights_agent import gerar_insights_gestor
 
-DB_PATH = os.getenv("DB_PATH", "/app/data/mensagens.sqlite3")
+try:
+    import psycopg2
+    from database import Database, PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASS
+except Exception as e:
+    Database = None
+    print(f"Erro de import PostgreSQL: {e}")
+
 
 def carregar_dados():
-    conn = sqlite3.connect(DB_PATH)
+    if not Database:
+        return pd.DataFrame()
+
     try:
-        df = pd.read_sql_query(
-            "SELECT id, datahora, texto, sentimento, confianca, emocao, score "
-            "FROM mensagens ORDER BY id DESC",
-            conn,
-        )
+        from database import get_connection, put_connection
+        conn = get_connection()
+        if not conn:
+            return pd.DataFrame()
+            
+        # Extrai os dados do PostgreSQL e também do campo metadata JSONB
+        query = """
+        SELECT 
+            id, 
+            created_at as datahora, 
+            content as texto, 
+            COALESCE(metadata->>'sentimento', 'neutro') as sentimento,
+            COALESCE(metadata->>'confianca', '0') as confianca,
+            COALESCE(metadata->>'emocao', 'nenhuma') as emocao,
+            COALESCE(metadata->>'score', '0') as score
+        FROM messages 
+        WHERE role = 'user'
+        ORDER BY id DESC
+        """
+        df = pd.read_sql_query(query, conn)
+        # Tenta converter colunas numéricas
+        df['confianca'] = pd.to_numeric(df['confianca'], errors='coerce').fillna(0)
+        df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+    except Exception as e:
+        print(f"Erro PostgreSQL: {e}")
+        return pd.DataFrame()
     finally:
-        conn.close()
+        if 'conn' in locals() and conn:
+            put_connection(conn)
+            
     if "datahora" in df.columns:
         df["datahora"] = pd.to_datetime(df["datahora"], errors="coerce")
     return df
@@ -31,6 +61,17 @@ st.title("📊 Dashboard de Análise de Mensagens")
 st.sidebar.title("🤖 Insights do Gestor")
 st.sidebar.caption("Consultor AI em tempo real.")
 
+# ===== INICIO DA LÓGICA DE REFRESH EM TEMPO REAL =====
+try:
+    from streamlit_autorefresh import st_autorefresh
+    auto_refresh = st.sidebar.toggle("⏱️ Auto-refresh (a cada 15s)", value=True)
+    if auto_refresh:
+        st_autorefresh(interval=15000, key="data_refresh_insights")
+        st.sidebar.caption("🔄 Atualizando automaticamente...")
+except ImportError:
+    st.sidebar.warning("⚠️ Instale 'streamlit-autorefresh' (`pip install streamlit-autorefresh`) para leitura em tempo real contínua.")
+# ===== FIM DA LÓGICA DE REFRESH =====
+
 df = carregar_dados()
 if df.empty:
     st.warning("Nenhuma mensagem encontrada no banco de dados.")
@@ -39,6 +80,13 @@ if df.empty:
 # Inicializa o histórico de chat da barra lateral na sessão
 if "insights_chat" not in st.session_state:
     st.session_state.insights_chat = []
+    
+    # Ao iniciar, recupera os últimos do PostgreSQL
+    if Database:
+        historico_db = Database.get_latest_insights(limit=5)
+        # O histórico vem do mais novo para o mais velho (DESC)
+        for h in reversed(historico_db):
+            st.session_state.insights_chat.append({"role": "assistant", "content": h["insight_text"]})
 
 # Exibe as mensagens do histórico na barra lateral
 for msg in st.session_state.insights_chat:
@@ -101,11 +149,55 @@ Seja extremamente objetivo e use formatação clara (bullet points) focando estr
                     max_tokens=600
                 )
                 resposta = resp.choices[0].message.content.strip()
+                
+                # Salva no PostgreSQL
+                if Database:
+                    Database.add_insight(", ".join(palavras_frequentes_nuvem), resposta)
             except Exception as e:
                 resposta = f"❌ Erro ao consultar a API: {e}"
                 
             st.markdown(resposta)
             st.session_state.insights_chat.append({"role": "assistant", "content": resposta})
+
+# ====== ANÁLISE PRÓ-ATIVA EM TEMPO REAL ======
+# Apenas dispara relatorio automatico no painel principal se o contexto mudou
+todas_mensagens_str = "".join(df["texto"].dropna().tolist()) if not df.empty else ""
+if "ultimo_contexto_analisado" not in st.session_state:
+    st.session_state.ultimo_contexto_analisado = ""
+
+st.sidebar.divider()
+st.sidebar.subheader("🤖 Novo Relatorio do Gestor (Consultor AI)")
+st.sidebar.info("Clique abaixo ou aguarde novas mensagens para gerar o relatório atualizado.")
+
+if st.sidebar.button("🧠 Gerar Relatório de Insights e Próximos Passos", type="primary", use_container_width=True) or (todas_mensagens_str != st.session_state.ultimo_contexto_analisado and st.session_state.ultimo_contexto_analisado != ""):
+    st.session_state.ultimo_contexto_analisado = todas_mensagens_str
+    
+    with st.sidebar.status("Agente Consultor está analisando as novas mensagens...", expanded=True) as status:
+        # Prepara contexto
+        mensagens_amostra = df["texto"].dropna().tail(30).tolist()
+        todas_palavras = " ".join(df["texto"].dropna().tolist()).lower().split()
+        palavras_filtro = [p for p in todas_palavras if len(p) > 4]
+        from collections import Counter
+        palavras_frequentes_nuvem = [word for word, count in Counter(palavras_filtro).most_common(25)]
+        
+        # Chama nosso novo agente exportado via import (do insights_agent.py)
+        # O gerar_insights_gestor vai retornar a string formatada
+        try:
+            relatorio = gerar_insights_gestor(
+                mensagens=mensagens_amostra, 
+                sentimentos=[], # O agente agora foca nas palavras
+                palavras_frequentes=palavras_frequentes_nuvem
+            )
+            # Salva no PostgreSQL
+            if Database:
+                Database.add_insight(", ".join(palavras_frequentes_nuvem), relatorio)
+                
+            st.session_state.insights_chat.append({"role": "assistant", "content": f"**⚡ ANÁLISE AUTOMÁTICA EM TEMPO REAL ⚡**\n\n{relatorio}"})
+            st.rerun() # Atualiza a tela imediatamente para desenhar a mensagem na sidebar
+        except Exception as e:
+            st.error(f"Erro ao gerar análise: {e}")
+            status.update(label="Erro!", state="error")
+
 
 st.sidebar.divider()
 

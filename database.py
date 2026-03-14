@@ -124,6 +124,18 @@ def init_db() -> None:
                 ON messages(session_id, created_at DESC);
                 """
             )
+            
+            # Nova tabela para os Insights do Gestor
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS insights (
+                    id SERIAL PRIMARY KEY,
+                    contexto_analisado TEXT NOT NULL,
+                    insight_text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
         conn.commit()
         print("✅ Tabelas/índices inicializados")
     except Exception as e:
@@ -259,6 +271,55 @@ class Database:
         except Exception as e:
             conn.rollback()
             print(f"❌ Erro clear_session: {e}")
+        finally:
+            put_connection(conn)
+
+    @staticmethod
+    def add_insight(contexto_analisado: str, insight_text: str) -> bool:
+        conn = get_connection()
+        if not conn:
+            return False
+            
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO insights (contexto_analisado, insight_text, created_at)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (contexto_analisado, insight_text, datetime.utcnow())
+                )
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ Erro ao salvar insight: {e}")
+            return False
+        finally:
+            put_connection(conn)
+            
+    @staticmethod
+    def get_latest_insights(limit: int = 10) -> List[Dict]:
+        conn = get_connection()
+        if not conn:
+            return []
+            
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, contexto_analisado, insight_text, created_at
+                    FROM insights
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,)
+                )
+                rows = cur.fetchall() or []
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"❌ Erro ao buscar insights: {e}")
+            return []
         finally:
             put_connection(conn)
 

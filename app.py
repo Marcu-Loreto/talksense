@@ -904,9 +904,17 @@ if mensagem_usuario:
     else:
         texto_corrigido = mensagem_usuario
     
-    # Adiciona ao histórico
+    # Adiciona ao histórico do app
     st.session_state["lista_mensagens"].append(
         {"role": "user", "content": texto_corrigido}
+    )
+    
+    # Salva efetivamente na base de dados para o Gestor / Agente de Insights ver
+    SharedState.add_message(
+        session_id="default",
+        role="user",
+        content=texto_corrigido,
+        metadata={"origem": "app_streamlit_chat"}
     )
     
     # Tokeniza
@@ -964,6 +972,14 @@ if mensagem_usuario:
                 
                 st.session_state["lista_mensagens"].append(
                     {"role": "assistant", "content": resposta_ia}
+                )
+                
+                # Salva efetivamente na base de dados para o Gestor ver
+                SharedState.add_message(
+                    session_id="default",
+                    role="assistant",
+                    content=resposta_ia,
+                    metadata={"origem": "app_streamlit_chat"}
                 )
                 
                 # Recarrega visualizações

@@ -12,6 +12,7 @@ import streamlit.components.v1 as components
 # Integrações locais
 from shared_state import SharedState  # usa PostgreSQL > Redis > JSON
 from analysis import processar_lista_mensagens  # NÃO alteramos a lógica de análise
+from insights_agent import gerar_insights_gestor  # NOVO: Agente de Insights do Gestor
 
 st.set_page_config(
     page_title="Painel de Sentimentos", layout="wide",
@@ -177,7 +178,31 @@ if wordcloud_img:
     st.image(wordcloud_img, caption="Termos mais frequentes", use_container_width=True)
 else:
     st.info("Sem imagem gerada.")
-    
+
+# ======= INSIGHTS DO GESTOR (NOVO AGENTE) ========
+st.divider()
+st.subheader("🤖 Insights do Gestor (Consultor AI)")
+st.info("Este agente analisa o tom da conversa, os termos mais frequentes e o histórico acima para lhe dar recomendações diretas.")
+
+if st.button("🧠 Gerar Relatório de Insights e Próximos Passos", type="primary", use_container_width=True):
+    with st.spinner("O Agente Consultor está analisando a sessão..."):
+        # Extrai as palavras mais frequentes diretamente do grafo para contextualizar o agente
+        palavras_frequentes = []
+        if grafo and isinstance(grafo, nx.Graph) and len(grafo.nodes) > 0:
+            counts = nx.get_node_attributes(grafo, "count")
+            palavras_ordenadas = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+            palavras_frequentes = [w for w, _ in palavras_ordenadas]
+
+        # Chama nosso novo agente
+        relatorio = gerar_insights_gestor(
+            mensagens=mensagens, 
+            sentimentos=sentimentos, 
+            palavras_frequentes=palavras_frequentes
+        )
+        
+        st.success("Análise concluída!")
+        st.markdown(f"### 📋 Relatório Estratégico\n\n{relatorio}")
+
 # ======= GRAFO ========
 
 # st.divider()
