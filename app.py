@@ -13,6 +13,7 @@ import base64
 import time
 import pickle
 from datetime import datetime
+import uuid
 
 
 # Imports opcionais
@@ -708,8 +709,10 @@ def carregar_sessao(uploaded_file):
 # SINCRONIZAÇÃO COM API
 # ═══════════════════════════════════════════════════════════════
 
-def sincronizar_mensagens_api(session_id: str = "default"):
+def sincronizar_mensagens_api(session_id: str = None):
     """Sincroniza mensagens recebidas via API com o Streamlit"""
+    if session_id is None:
+        session_id = st.session_state.get("session_uuid", "default")
     
     # DEBUG
     st.sidebar.write("---")
@@ -859,6 +862,14 @@ if "arquivo_importado" not in st.session_state:
 if "mostrar_relatorio_arquivo" not in st.session_state:
     st.session_state["mostrar_relatorio_arquivo"] = False
 
+# --- INICIALIZAÇÃO DE SESSÃO ÚNICA ---
+if "session_uuid" not in st.session_state:
+    st.session_state["session_uuid"] = str(uuid.uuid4())
+
+if "user_name" not in st.session_state:
+    st.session_state["user_name"] = None
+
+session_id = st.session_state["session_uuid"]
 # ═══════════════════════════════════════════════════════════════
 # RENDERIZAÇÃO DO HISTÓRICO
 # ═══════════════════════════════════════════════════════════════
@@ -910,6 +921,13 @@ if mensagem_usuario:
     else:
         texto_corrigido = mensagem_usuario
     
+    # Tenta extrair o nome do usuário se não estiver definido
+    if not st.session_state.get("user_name"):
+        # Regex simples para capturar nomes após padrões comuns
+        match = re.search(r"(?:meu nome é|me chamo|sou o|sou a)\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)*)", texto_corrigido, re.IGNORECASE)
+        if match:
+            st.session_state["user_name"] = match.group(1).strip().title()
+    
     # Adiciona ao histórico do app
     st.session_state["lista_mensagens"].append(
         {"role": "user", "content": texto_corrigido}
@@ -917,10 +935,13 @@ if mensagem_usuario:
     
     # Salva efetivamente na base de dados para o Gestor / Agente de Insights ver
     SharedState.add_message(
-        session_id="default",
+        session_id=session_id,
         role="user",
         content=texto_corrigido,
-        metadata={"origem": "app_streamlit_chat"}
+        metadata={
+            "origem": "app_streamlit_chat",
+            "user_name": st.session_state.get("user_name")
+        }
     )
     
     # Tokeniza
@@ -982,10 +1003,13 @@ if mensagem_usuario:
                 
                 # Salva efetivamente na base de dados para o Gestor ver
                 SharedState.add_message(
-                    session_id="default",
+                    session_id=session_id,
                     role="assistant",
                     content=resposta_ia,
-                    metadata={"origem": "app_streamlit_chat"}
+                    metadata={
+                        "origem": "app_streamlit_chat",
+                        "user_name": st.session_state.get("user_name")
+                    }
                 )
                 
                 # Recarrega visualizações

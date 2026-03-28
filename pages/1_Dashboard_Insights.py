@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from insights_agent import gerar_insights_gestor
+from insights_agent import gerar_insights_gestor, get_insight_prompt
 
 try:
     import psycopg2
@@ -28,6 +28,7 @@ def carregar_dados():
         SELECT 
             id, 
             session_id,
+            COALESCE(metadata->>'user_name', 'Desconhecido') as usuario,
             created_at as datahora, 
             content as texto, 
             COALESCE(metadata->>'sentimento', 'neutro') as sentimento,
@@ -175,20 +176,19 @@ if prompt := st.sidebar.chat_input("Pergunte algo ao consultor..."):
             
             # Monta o contexto para o LLM responder focando na NUVEM DE PALAVRAS e CAUSA/EFEITO
             textos_contexto = "\n".join([f"- {m}" for m in mensagens_amostra])
-            system_prompt = f"""Você é um Consultor Analítico de Experiência do Cliente. Sua função EXCLUSIVA é analisar a **NUVEM DE PALAVRAS** gerada das conversas entre clientes e atendentes para traçar relações diretas de Causa e Efeito gerenciais. Você NÃO interage com os clientes e não usa a análise de sentimento como base primária.
-
-Sua tarefa é cruzar as palavras frequentes da Nuvem com as amostras de texto e SEMPRE focar nestes 3 pontos:
-1. **Identificar o Problema Geral**: Qual é a principal dor baseada nas relações de palavras da nuvem?
-2. **Causa e Efeito**: Como os termos mais citados estão conectados gerando este gargalo?
-3. **Ações de Melhoria**: Liste ações práticas e diretas que o Gestor pode tomar para minimizar essas causas raízes.
-
-### Dados Extraídos da Nuvem de Palavras:
-- **Top Palavras Mais Frequentes**: {', '.join(palavras_frequentes_nuvem)}
-
-### Amostra de Contexto (Últimas Mgs para entender o uso das palavras):
-{textos_contexto}
-
-Seja extremamente objetivo e use formatação clara (bullet points) focando estritamente em CAUSA E EFEITO baseado no vocabulário acima."""
+            # Carrega o prompt especializado para CHAT (cacheado)
+            template = get_insight_prompt("prompt_insight_chat.md")
+            
+            # Preenche o template para o chat interativo
+            try:
+                system_prompt = template.format(
+                    status_sentimento="(Analise baseada na Nuvem)",
+                    media_sentimento="N/A",
+                    palavras_frequentes=", ".join(palavras_frequentes_nuvem),
+                    textos_mensagens=textos_contexto
+                )
+            except Exception as e:
+                system_prompt = f"Erro no template de prompt: {e}"
             
             # Histórico do chat (mandamos as últimas mensagens do chat da sidebar tbm)
             messages_llm = [{"role": "system", "content": system_prompt}]

@@ -1,0 +1,17 @@
+{
+  "skill_name": "testing-security",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Execute um scan de segurança no arquivo app.py e salve o relatório na pasta testes.",
+      "expected_output": "Um arquivo markdown na pasta testes/ contendo a análise de vulnerabilidades do app.py.",
+      "files": ["app.py"]
+    },
+    {
+      "id": 2,
+      "prompt": "Crie um teste unitário para a função _score_from_label em app.py e gere o relatório de execução.",
+      "expected_output": "Um arquivo markdown no diretório testes/ com o resultado do teste unitário e o percentual de sucesso.",
+      "files": ["app.py"]
+    }
+  ]
+}
