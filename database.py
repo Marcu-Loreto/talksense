@@ -194,6 +194,58 @@ class Database:
             put_connection(conn)
 
     @staticmethod
+    def update_metadata(message_id: int, extra_metadata: Dict) -> bool:
+        """Atualiza o metadata JSONB de uma mensagem existente (merge)."""
+        conn = get_connection()
+        if not conn:
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE messages
+                    SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                    WHERE id = %s
+                    """,
+                    (json.dumps(extra_metadata, ensure_ascii=False), message_id),
+                )
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ Erro update_metadata: {e}")
+            return False
+        finally:
+            put_connection(conn)
+
+    @staticmethod
+    def get_messages_without_sentiment(limit: int = 200) -> List[Dict]:
+        """Retorna mensagens de usuário que ainda não têm sentimento no metadata."""
+        conn = get_connection()
+        if not conn:
+            return []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, content
+                    FROM messages
+                    WHERE role = 'user'
+                      AND (metadata->>'sentimento' IS NULL OR metadata->>'sentimento' = '')
+                    ORDER BY id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall() or []
+                return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"❌ Erro get_messages_without_sentiment: {e}")
+            return []
+        finally:
+            put_connection(conn)
+
+    @staticmethod
     def get_messages(session_id: str, limit: Optional[int] = None) -> List[Dict]:
         conn = get_connection()
         if not conn:

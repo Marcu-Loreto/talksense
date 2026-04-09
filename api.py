@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import uvicorn
 
 from shared_state import SharedState
+from analysis import analisar_sentimento, score_from_label
 
 load_dotenv()
 
@@ -89,6 +90,23 @@ async def receive_message(
         raise HTTPException(status_code=401, detail="API Key inválida")
     
     try:
+        # Analisa sentimento antes de salvar
+        sentiment_metadata = {}
+        try:
+            resultado = analisar_sentimento(request.user_message)
+            label = resultado.get("label", "neutro")
+            confidence = float(resultado.get("confidence", 0.0))
+            score = score_from_label(label, confidence)
+            emotions = resultado.get("emotions", [])
+            sentiment_metadata = {
+                "sentimento": label,
+                "confianca": str(confidence),
+                "emocao": emotions[0] if emotions else "nenhuma",
+                "score": str(score),
+            }
+        except Exception as e:
+            print(f"⚠️ Erro ao analisar sentimento na API: {e}")
+
         message = SharedState.add_message(
             session_id=request.session_id,
             role="user",
@@ -96,7 +114,8 @@ async def receive_message(
             metadata={
                 "user_id": request.user_id,
                 "source": "api",
-                **request.metadata
+                **request.metadata,
+                **sentiment_metadata,
             }
         )
         
@@ -127,11 +146,28 @@ async def n8n_webhook(data: dict):
         if not user_message:
             raise HTTPException(status_code=400, detail="Campo 'message' obrigatório")
         
+        # Analisa sentimento antes de salvar
+        sentiment_metadata = {}
+        try:
+            resultado = analisar_sentimento(user_message)
+            label = resultado.get("label", "neutro")
+            confidence = float(resultado.get("confidence", 0.0))
+            score = score_from_label(label, confidence)
+            emotions = resultado.get("emotions", [])
+            sentiment_metadata = {
+                "sentimento": label,
+                "confianca": str(confidence),
+                "emocao": emotions[0] if emotions else "nenhuma",
+                "score": str(score),
+            }
+        except Exception as e:
+            print(f"⚠️ Erro ao analisar sentimento no webhook: {e}")
+
         message = SharedState.add_message(
             session_id=session_id,
             role="user",
             content=user_message,
-            metadata={"source": "n8n", **data}
+            metadata={"source": "n8n", **data, **sentiment_metadata}
         )
         
         return {

@@ -58,6 +58,11 @@ except Exception:
 load_dotenv()
 
 from shared_state import SharedState
+
+try:
+    from database import Database
+except Exception:
+    Database = None
 # ═══════════════════════════════════════════════════════════════
 # CORRETOR ORTOGRÁFICO INTEGRADO
 # ═══════════════════════════════════════════════════════════════
@@ -798,15 +803,32 @@ def sincronizar_mensagens_api(session_id: str = None):
                         CONFIG["modelo_sentimento"]
                     )
                     
+                    label = resultado_sentimento.get("label", "neutro")
+                    confidence = float(resultado_sentimento.get("confidence", 0.0))
+                    score = _score_from_label(label, confidence)
+                    emotions = resultado_sentimento.get("emotions", [])
+                    
                     st.session_state["sentiment_history"].append({
                         "idx": len(st.session_state["sentiment_history"]) + 1,
-                        "label": resultado_sentimento.get("label", "neutro"),
-                        "confidence": float(resultado_sentimento.get("confidence", 0.0)),
-                        "score": _score_from_label(
-                            resultado_sentimento.get("label", "neutro"),
-                            float(resultado_sentimento.get("confidence", 0.0))
-                        )
+                        "label": label,
+                        "confidence": confidence,
+                        "score": score,
                     })
+                    
+                    # Persiste sentimento no banco se a mensagem ainda não tem
+                    msg_metadata = msg.get("metadata", {})
+                    if not msg_metadata.get("sentimento"):
+                        try:
+                            msg_id = msg.get("id")
+                            if msg_id and Database:
+                                Database.update_metadata(msg_id, {
+                                    "sentimento": label,
+                                    "confianca": str(confidence),
+                                    "emocao": emotions[0] if emotions else "nenhuma",
+                                    "score": str(score),
+                                })
+                        except Exception as e2:
+                            print(f"⚠️ Erro ao persistir sentimento: {e2}")
                 except Exception as e:
                     print(f"⚠️ Erro ao analisar sentimento: {e}")
         
@@ -953,17 +975,6 @@ if mensagem_usuario:
         {"role": "user", "content": texto_corrigido}
     )
     
-    # Salva efetivamente na base de dados para o Gestor / Agente de Insights ver
-    SharedState.add_message(
-        session_id=session_id,
-        role="user",
-        content=texto_corrigido,
-        metadata={
-            "origem": "app_streamlit_chat",
-            "user_name": st.session_state.get("user_name")
-        }
-    )
-    
     # Tokeniza
     tokens = tokenize_pt(texto_corrigido, corrigir=False)
     
@@ -971,7 +982,8 @@ if mensagem_usuario:
         st.session_state["user_corpus_text"] += " " + " ".join(tokens)
         st.session_state["user_token_sequences"].append(tokens)
     
-    # Análise de Sentimento
+    # Análise de Sentimento (antes de salvar, para incluir no metadata)
+    sentiment_metadata = {}
     if sentimento_habilitado:
         with st.spinner("🧠 Analisando sentimento..."):
             resultado_sentimento = analisar_sentimento(
@@ -980,6 +992,11 @@ if mensagem_usuario:
             )
             st.session_state["sentimento_atual"] = resultado_sentimento
             
+            label = resultado_sentimento.get("label", "neutro")
+            confidence = float(resultado_sentimento.get("confidence", 0.0))
+            score = _score_from_label(label, confidence)
+            emotions = resultado_sentimento.get("emotions", [])
+            
             idx_user = sum(
                 1 for m in st.session_state["lista_mensagens"]
                 if m.get("role") == "user"
@@ -987,13 +1004,30 @@ if mensagem_usuario:
             
             st.session_state["sentiment_history"].append({
                 "idx": idx_user,
-                "label": resultado_sentimento.get("label", "neutro"),
-                "confidence": float(resultado_sentimento.get("confidence", 0.0)),
-                "score": _score_from_label(
-                    resultado_sentimento.get("label", "neutro"),
-                    float(resultado_sentimento.get("confidence", 0.0))
-                ),
+                "label": label,
+                "confidence": confidence,
+                "score": score,
             })
+            
+            # Dados de sentimento para persistir no banco
+            sentiment_metadata = {
+                "sentimento": label,
+                "confianca": str(confidence),
+                "emocao": emotions[0] if emotions else "nenhuma",
+                "score": str(score),
+            }
+    
+    # Salva efetivamente na base de dados para o Gestor / Agente de Insights ver
+    SharedState.add_message(
+        session_id=session_id,
+        role="user",
+        content=texto_corrigido,
+        metadata={
+            "origem": "app_streamlit_chat",
+            "user_name": st.session_state.get("user_name"),
+            **sentiment_metadata,
+        }
+    )
     
     # Resposta do Assistente
     with st.chat_message("assistant"):
