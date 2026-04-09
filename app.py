@@ -63,6 +63,12 @@ try:
     from database import Database
 except Exception:
     Database = None
+
+try:
+    from neo4j_graph import salvar_tokens_mensagem, NEO4J_AVAILABLE
+except Exception:
+    salvar_tokens_mensagem = None
+    NEO4J_AVAILABLE = False
 # ═══════════════════════════════════════════════════════════════
 # CORRETOR ORTOGRÁFICO INTEGRADO
 # ═══════════════════════════════════════════════════════════════
@@ -124,19 +130,49 @@ def corrigir_palavra(palavra: str) -> str:
     return palavra
 
 
-@st.cache_data(show_spinner=False)
 def corrigir_texto(texto: str) -> str:
-    """Corrige ortografia de um texto completo."""
+    """
+    Corrige ortografia e gramática de um texto completo.
+    1º passo: dicionário rápido para abreviações de internet
+    2º passo: LLM para erros de digitação e gramática
+    """
+    # Passo 1: correções rápidas por dicionário (abreviações)
     tokens = re.findall(r'\b\w+\b|[^\w\s]', texto)
-    
-    corrigido = []
+    parcial = []
     for token in tokens:
         if re.match(r'\w+', token):
-            corrigido.append(corrigir_palavra(token))
+            parcial.append(corrigir_palavra(token))
         else:
-            corrigido.append(token)
-    
-    return ' '.join(corrigido)
+            parcial.append(token)
+    texto_parcial = ' '.join(parcial)
+
+    # Passo 2: correção gramatical via LLM (leve e rápido)
+    try:
+        resp = client.chat.completions.create(
+            model=CONFIG.get("modelo_padrao", "gpt-4.1-nano"),
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você é um corretor ortográfico e gramatical de português brasileiro. "
+                        "Corrija APENAS erros de ortografia, acentuação e gramática no texto do usuário. "
+                        "NÃO altere o significado, NÃO adicione palavras, NÃO reformule frases. "
+                        "Retorne SOMENTE o texto corrigido, sem explicações."
+                    ),
+                },
+                {"role": "user", "content": texto_parcial},
+            ],
+            temperature=0.0,
+            max_tokens=len(texto_parcial) + 100,
+        )
+        corrigido = resp.choices[0].message.content.strip()
+        # Proteção: se o LLM devolver algo muito diferente, usa o parcial
+        if len(corrigido) > len(texto_parcial) * 2 or len(corrigido) < len(texto_parcial) * 0.3:
+            return texto_parcial
+        return corrigido
+    except Exception as e:
+        print(f"⚠️ Correção LLM falhou, usando dicionário: {e}")
+        return texto_parcial
 
 
 @st.cache_data(show_spinner=False)
@@ -436,8 +472,7 @@ def gerar_wordcloud(tokens: list, width: int = 450, height: int = 280):
 # GRAFO DE PALAVRAS
 # ═══════════════════════════════════════════════════════════════
 
-@st.cache_data(show_spinner="🔗 Construindo grafo...")
-def build_word_graph(_token_sequences, min_edge_weight: int = 1, max_nodes: int = 500, window_size: int = 3):
+def build_word_graph(token_sequences, min_edge_weight: int = 1, max_nodes: int = 500, window_size: int = 3):
     """
     Constrói grafo de coocorrências usando janela deslizante (Sliding Window).
     Isso captura relacionamentos entre palavras próximas, não apenas adjacentes.
@@ -449,7 +484,7 @@ def build_word_graph(_token_sequences, min_edge_weight: int = 1, max_nodes: int 
     node_counts = Counter()
     edge_counts = Counter()
     
-    for seq in _token_sequences:
+    for seq in token_sequences:
         node_counts.update(seq)
         
         # Sliding Window para capturar coocorrências
@@ -788,6 +823,12 @@ def sincronizar_mensagens_api(session_id: str = None):
             if tokens:
                 st.session_state["user_corpus_text"] += " " + " ".join(tokens)
                 st.session_state["user_token_sequences"].append(tokens)
+                # Persiste no Neo4j
+                if NEO4J_AVAILABLE and salvar_tokens_mensagem:
+                    try:
+                        salvar_tokens_mensagem(tokens, session_id=msg.get("session_id", "default"))
+                    except Exception:
+                        pass
             
             # Analisa sentimento se habilitado
             if CONFIG.get("sentimento_habilitado"):
@@ -975,6 +1016,12 @@ if mensagem_usuario:
     if tokens:
         st.session_state["user_corpus_text"] += " " + " ".join(tokens)
         st.session_state["user_token_sequences"].append(tokens)
+        # Persiste no Neo4j
+        if NEO4J_AVAILABLE and salvar_tokens_mensagem:
+            try:
+                salvar_tokens_mensagem(tokens, session_id=session_id)
+            except Exception as e:
+                print(f"⚠️ Neo4j salvar_tokens: {e}")
     
     # Análise de Sentimento (antes de salvar, para incluir no metadata)
     sentiment_metadata = {}

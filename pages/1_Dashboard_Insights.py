@@ -4,6 +4,10 @@ import sys, os
 _local_path = r"C:\Users\marcu\AppData\Local\Programs\Python\Python313\Lib\site-packages"
 if os.path.exists(_local_path) and _local_path not in sys.path:
     sys.path.append(_local_path)
+# Garante que a raiz do projeto está no path (para imports de módulos locais)
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 # --- FIM HACK DE COMPATIBILIDADE DE PATH ---
 
 import os
@@ -18,6 +22,18 @@ try:
 except Exception as e:
     Database = None
     print(f"Erro de import PostgreSQL: {e}")
+
+try:
+    from neo4j_graph import (
+        NEO4J_AVAILABLE as _NEO4J_OK,
+        obter_grafo_completo,
+        obter_subgrafo,
+        _subgrafo_bfs,
+        obter_estatisticas as neo4j_stats,
+    )
+except Exception:
+    _NEO4J_OK = False
+    obter_grafo_completo = None
 
 
 @st.cache_data(ttl=60, show_spinner="📊 Carregando dados do banco...")
@@ -325,14 +341,18 @@ col_wc, col_sent = st.columns(2)
 
 with col_wc:
     st.subheader("☁️ Nuvem de Palavras")
+    _todos_tokens = []  # compartilhado entre nuvem e grafo
+    _token_sequences = []  # sequências por mensagem para o grafo
     if not filtrado.empty:
         try:
             from analysis import tokenize_pt, gerar_wordcloud
-            todos_tokens = []
             for texto in filtrado["texto"].dropna():
-                todos_tokens.extend(tokenize_pt(texto))
-            if todos_tokens:
-                corpus = " ".join(todos_tokens)
+                tks = tokenize_pt(texto)
+                _todos_tokens.extend(tks)
+                if tks:
+                    _token_sequences.append(tks)
+            if _todos_tokens:
+                corpus = " ".join(_todos_tokens)
                 wc_img = gerar_wordcloud(corpus)
                 st.image(wc_img, use_container_width=True)
             else:
@@ -366,6 +386,132 @@ with col_sent:
 # ======= TABELA DE MENSAGENS =======
 st.subheader("📋 Mensagens")
 st.dataframe(filtrado, use_container_width=True)
+
+# ======= GRAFO DE PALAVRAS (Neo4j Aura + fallback local) =======
+st.subheader("🔗 Grafo de Palavras")
+
+# Fonte do grafo: Neo4j se disponível, senão local
+_use_neo4j = _NEO4J_OK and obter_grafo_completo is not None
+
+if _use_neo4j:
+    st.caption("📡 Fonte: Neo4j Aura")
+else:
+    st.caption("💾 Fonte: análise local")
+
+# Controles
+col_g1, col_g2, col_g3 = st.columns(3)
+
+if _use_neo4j:
+    # Carrega palavras do Neo4j para o seletor
+    _sid_filtro = sessao_selecionada if sessao_selecionada != "Todas as Conversas" else None
+    _grafo_data = obter_grafo_completo(session_id=_sid_filtro, limit=500)
+    if _grafo_data and _grafo_data["nodes"]:
+        _palavras_neo = sorted(_grafo_data["nodes"], key=lambda x: -x["count"])
+        _opcoes_neo = [n["text"] for n in _palavras_neo[:100]]
+    else:
+        _opcoes_neo = []
+
+    with col_g1:
+        palavra_alvo = st.selectbox("🔍 Palavra alvo:", ["(todas)"] + _opcoes_neo, key="insight_graph_target")
+    with col_g2:
+        min_edge_w = st.slider("Mín. coocorrências", 1, 5, 1, key="insight_min_edge")
+    with col_g3:
+        max_depth = st.slider("Profundidade", 1, 6, 4, key="insight_max_depth")
+
+    # Busca subgrafo ou grafo completo
+    if palavra_alvo != "(todas)" and palavra_alvo:
+        _graph_result = _subgrafo_bfs(palavra_alvo, max_depth=max_depth, min_weight=min_edge_w)
+    else:
+        _graph_result = _grafo_data
+
+    if _graph_result and _graph_result["nodes"]:
+        try:
+            from pyvis.network import Network as PyvisNet
+            import streamlit.components.v1 as components
+
+            net = PyvisNet(height="500px", width="100%", bgcolor="#0f172a", font_color="#e5e7eb", notebook=False)
+            net.barnes_hut(gravity=-2000, central_gravity=0.3, spring_length=160, spring_strength=0.01, damping=0.9)
+
+            max_count = max(n["count"] for n in _graph_result["nodes"]) or 1
+            for n in _graph_result["nodes"]:
+                size = 12 + (30 * (n["count"] / max_count))
+                color = "#34d399" if n["text"] == palavra_alvo else "#93c5fd"
+                net.add_node(n["text"], label=n["text"], size=size, color=color, title=f"{n['text']}<br/>freq: {n['count']}")
+
+            for e in _graph_result["edges"]:
+                if e["weight"] >= min_edge_w:
+                    net.add_edge(e["source"], e["target"], value=e["weight"], width=1 + min(10, e["weight"]),
+                                 title=f"{e['source']} — {e['target']}<br/>coocorrências: {e['weight']}")
+
+            graph_html = net.generate_html()
+            components.html(graph_html, height=520, scrolling=True)
+
+            n_nodes = len(_graph_result["nodes"])
+            n_edges = len([e for e in _graph_result["edges"] if e["weight"] >= min_edge_w])
+            st.caption(f"📊 {n_nodes} nós | {n_edges} arestas")
+        except Exception as e:
+            st.warning(f"Erro ao renderizar grafo Neo4j: {e}")
+    else:
+        st.info("Grafo vazio no Neo4j — envie mais mensagens ou execute a migração.")
+
+elif _token_sequences and len(_token_sequences) > 0:
+    # Fallback: grafo local com networkx
+    try:
+        import networkx as nx
+        from analysis import build_word_graph
+
+        G_insights = build_word_graph(_token_sequences, min_edge_weight=1)
+        if G_insights is not None and len(G_insights.nodes()) > 0:
+            with col_g1:
+                counts_g = nx.get_node_attributes(G_insights, "count")
+                palavras_ord = sorted(counts_g.items(), key=lambda x: (-x[1], x[0]))
+                opcoes_palavras = [w for w, _ in palavras_ord[:100]]
+                palavra_alvo = st.selectbox("🔍 Palavra alvo:", ["(todas)"] + opcoes_palavras, key="insight_graph_target")
+            with col_g2:
+                min_edge_w = st.slider("Mín. coocorrências", 1, 5, 1, key="insight_min_edge")
+            with col_g3:
+                max_depth = st.slider("Profundidade", 1, 6, 4, key="insight_max_depth")
+
+            G_view = G_insights
+            if palavra_alvo != "(todas)" and palavra_alvo in G_insights:
+                visitados = {palavra_alvo}
+                fronteira = {palavra_alvo}
+                for _ in range(max_depth):
+                    nova = set()
+                    for u in fronteira:
+                        for v in G_insights.neighbors(u):
+                            if v not in visitados:
+                                visitados.add(v)
+                                nova.add(v)
+                    fronteira = nova
+                G_view = G_insights.subgraph(visitados).copy()
+
+            if G_view and len(G_view.nodes()) > 0:
+                from pyvis.network import Network as PyvisNet
+                import streamlit.components.v1 as components
+
+                net = PyvisNet(height="500px", width="100%", bgcolor="#0f172a", font_color="#e5e7eb", notebook=False)
+                net.barnes_hut(gravity=-2000, central_gravity=0.3, spring_length=160, spring_strength=0.01, damping=0.9)
+                node_counts = nx.get_node_attributes(G_view, "count")
+                max_count = max(node_counts.values()) if node_counts else 1
+                for node, data in G_view.nodes(data=True):
+                    count = int(data.get("count", 1))
+                    size = 12 + (30 * (count / max_count))
+                    color = "#34d399" if node == palavra_alvo else "#93c5fd"
+                    net.add_node(node, label=node, size=size, color=color, title=f"{node}<br/>freq: {count}")
+                for u, v, data in G_view.edges(data=True):
+                    w = int(data.get("weight", 1))
+                    if w >= min_edge_w:
+                        net.add_edge(u, v, value=w, width=1 + min(10, w), title=f"{u} — {v}<br/>coocorrências: {w}")
+                graph_html = net.generate_html()
+                components.html(graph_html, height=520, scrolling=True)
+                st.caption(f"📊 {len(G_view.nodes())} nós | {len(G_view.edges())} arestas | Densidade: {nx.density(G_view):.3f}")
+        else:
+            st.info("Grafo vazio — envie mais mensagens.")
+    except Exception as e:
+        st.warning(f"Erro ao gerar grafo: {e}")
+else:
+    st.info("Sem dados suficientes para gerar o grafo.")
 
 # ======= EVOLUÇÃO DO SENTIMENTO NO TEMPO =======
 st.subheader("📈 Evolução do Sentimento no Tempo")

@@ -15,10 +15,18 @@ if os.path.exists(_local_path) and _local_path not in sys.path:
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+
+# Timezone padrão: São Paulo
+TZ_SP = ZoneInfo("America/Sao_Paulo")
+
+def _now_sp() -> datetime:
+    """Retorna datetime atual no fuso de São Paulo."""
+    return datetime.now(TZ_SP)
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -173,7 +181,7 @@ class Database:
                         session_id,
                         role,
                         content,
-                        datetime.utcnow(),
+                        _now_sp(),
                         json.dumps(metadata or {}, ensure_ascii=False),
                     ),
                 )
@@ -183,7 +191,7 @@ class Database:
                 "session_id": row[0],
                 "role": row[1],
                 "content": row[2],
-                "timestamp": row[3].isoformat() if row[3] else datetime.utcnow().isoformat(),
+                "timestamp": row[3].isoformat() if row[3] else _now_sp().isoformat(),
                 "metadata": row[4] or {},
                 "created_at": row[5].isoformat() if row[5] else None,
             }
@@ -281,7 +289,7 @@ class Database:
                         "content": r.get("content"),
                         "timestamp": (r.get("timestamp") or r.get("created_at")).isoformat()
                         if (r.get("timestamp") or r.get("created_at"))
-                        else datetime.utcnow().isoformat(),
+                        else _now_sp().isoformat(),
                         "metadata": r.get("metadata") or {},
                     }
                     for r in rows
@@ -346,7 +354,7 @@ class Database:
                     INSERT INTO insights (contexto_analisado, insight_text, created_at)
                     VALUES (%s, %s, %s)
                     """,
-                    (contexto_analisado, insight_text, datetime.utcnow())
+                    (contexto_analisado, insight_text, _now_sp())
                 )
             conn.commit()
             return True

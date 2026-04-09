@@ -13,10 +13,16 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+TZ_SP = ZoneInfo("America/Sao_Paulo")
+
+def _now_sp() -> datetime:
+    return datetime.now(TZ_SP)
 
 # PostgreSQL (opcional, preferido)
 try:
@@ -90,7 +96,7 @@ class SharedState:
                 msg = {
                     "role": role,
                     "content": content,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": _now_sp().isoformat(),
                     "metadata": metadata or {},
                 }
                 data["mensagens"].append(msg)
@@ -105,7 +111,7 @@ class SharedState:
         msg = {
             "role": role,
             "content": content,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _now_sp().isoformat(),
             "metadata": metadata or {},
         }
         data.setdefault("sessions", {}).setdefault(session_id, {"mensagens": []})["mensagens"].append(msg)
