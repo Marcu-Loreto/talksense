@@ -238,56 +238,49 @@ if prompt := st.sidebar.chat_input("Pergunte algo ao consultor..."):
         
     with st.sidebar.chat_message("assistant"):
         with st.spinner("Analisando..."):
-            # Preparar o contexto de dados do 'filtrado' (respeitando a sessão selecionada)
             mensagens_amostra = filtrado["texto"].dropna().tail(30).tolist()
-            
-            # Aqui focamos apenas nas palavras (nuvem de palavras)!
             todas_palavras = " ".join(filtrado["texto"].dropna().tolist()).lower().split()
-            
-            # Filtro básico (removendo palavras muito curtas)
             palavras_filtro = [p for p in todas_palavras if len(p) > 4]
             from collections import Counter
             palavras_frequentes_nuvem = [word for word, count in Counter(palavras_filtro).most_common(25)]
             
-            # Chama a API da OpenAI direto aqui na sidebar focando na nuvem de palavras
-            import os
-            import json
-            from openai import OpenAI
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            # Usa lazy client do insights_agent
+            from insights_agent import _get_client
+            _chat_client = _get_client()
             
-            # Monta o contexto para o LLM responder focando na NUVEM DE PALAVRAS e CAUSA/EFEITO
-            textos_contexto = "\n".join([f"- {m}" for m in mensagens_amostra])
-            # Carrega o prompt especializado para CHAT (cacheado)
-            template = get_insight_prompt("prompt_insight_chat.md")
-            
-            # Preenche o template para o chat interativo
-            try:
-                system_prompt = template.format(
-                    status_sentimento="(Analise baseada na Nuvem)",
-                    media_sentimento="N/A",
-                    palavras_frequentes=", ".join(palavras_frequentes_nuvem),
-                    textos_mensagens=textos_contexto
-                )
-            except Exception as e:
-                system_prompt = f"Erro no template de prompt: {e}"
-            
-            # Histórico do chat (mandamos as últimas mensagens do chat da sidebar tbm)
-            messages_llm = [{"role": "system", "content": system_prompt}]
-            for m in st.session_state.insights_chat[-5:]:
-                messages_llm.append({"role": m["role"], "content": m["content"]})
-            
-            try:
-                resp = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=messages_llm,
-                    temperature=0.3,
-                    max_tokens=600
-                )
-                resposta = resp.choices[0].message.content.strip()
+            if not _chat_client:
+                resposta = "⚠️ OPENAI_API_KEY não configurada."
+            else:
+                textos_contexto = "\n".join([f"- {m}" for m in mensagens_amostra])
+                template = get_insight_prompt("prompt_insight_chat.md")
                 
-                # Salva no PostgreSQL
-                if Database:
-                    Database.add_insight(", ".join(palavras_frequentes_nuvem), resposta)
+                try:
+                    system_prompt = template.format(
+                        status_sentimento="(Analise baseada na Nuvem)",
+                        media_sentimento="N/A",
+                        palavras_frequentes=", ".join(palavras_frequentes_nuvem),
+                        textos_mensagens=textos_contexto
+                    )
+                except Exception as e:
+                    system_prompt = f"Erro no template: {e}"
+                
+                messages_llm = [{"role": "system", "content": system_prompt}]
+                for m in st.session_state.insights_chat[-5:]:
+                    messages_llm.append({"role": m["role"], "content": m["content"]})
+                
+                try:
+                    resp = _chat_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages_llm,
+                        temperature=0.3,
+                        max_tokens=600
+                    )
+                    resposta = resp.choices[0].message.content.strip()
+                    
+                    if Database:
+                        Database.add_insight(", ".join(palavras_frequentes_nuvem), resposta)
+                except Exception as e:
+                    resposta = f"❌ Erro: {e}"
             except Exception as e:
                 resposta = f"❌ Erro ao consultar a API: {e}"
                 
