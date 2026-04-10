@@ -7,7 +7,7 @@ import networkx as nx
 from pyvis.network import Network
 import streamlit.components.v1 as components
 
-# qat-voxmap-atendimento-dashboard.nl9itp.easypanel.host
+# talksense.neori.tech
 
 # Integrações locais
 from shared_state import SharedState  # usa PostgreSQL > Redis > JSON
