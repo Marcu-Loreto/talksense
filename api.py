@@ -36,7 +36,8 @@ app.add_middleware(
 # Segurança
 API_KEY = os.getenv("API_KEY")
 if not API_KEY:
-    raise RuntimeError("⚠️ API_KEY não configurada no .env — a API não pode iniciar sem uma chave segura.")
+    import logging
+    logging.warning("⚠️ API_KEY não configurada — endpoints protegidos não funcionarão.")
 
 
 # Modelos

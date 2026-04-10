@@ -11,7 +11,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Lazy client — evita crash no import quando a env var não está definida
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        api_key = OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY não configurada")
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 _PT_STOPWORDS = {
 
@@ -135,7 +146,7 @@ def _formatar_prompt_sentimento(texto: str) -> str:
 
 def analisar_sentimento(texto: str, modelo_sentimento: str = "gpt-4.1-mini"):
     try:
-        resp = client.chat.completions.create(
+        resp = _get_client().chat.completions.create(
             model=modelo_sentimento,
             messages=[
                 {"role": "system", "content": "Retorne JSON estrito."},

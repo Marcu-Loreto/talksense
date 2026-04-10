@@ -28,6 +28,7 @@ COPY dashboard_n8n.py .
 
 # Copia pastas necessárias
 COPY prompt/ ./prompt/
+COPY .streamlit/ ./.streamlit/
 
 EXPOSE 8503
 

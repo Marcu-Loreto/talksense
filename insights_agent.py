@@ -1,12 +1,5 @@
 # insights_agent.py
 
-# --- INÍCIO HACK DE COMPATIBILIDADE DE PATH ---
-import sys, os
-_local_path = r"C:\Users\marcu\AppData\Local\Programs\Python\Python313\Lib\site-packages"
-if os.path.exists(_local_path) and _local_path not in sys.path:
-    sys.path.append(_local_path)
-# --- FIM HACK DE COMPATIBILIDADE DE PATH ---
-
 import os
 import json
 from openai import OpenAI
@@ -15,10 +8,17 @@ from dotenv import load_dotenv
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if OPENAI_API_KEY:
-    client = OpenAI(api_key=OPENAI_API_KEY)
-else:
-    client = None
+# Lazy client — evita crash no import quando a env var não está definida
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        api_key = OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 
 def get_insight_prompt(filename="prompt_insight_relatorio.md"):
@@ -55,7 +55,7 @@ def gerar_insights_gestor(
     """
     Retorna um relatório consultivo utilizando 'prompt_insight_relatorio.md'.
     """
-    if not client:
+    if not _get_client():
         return "⚠️ A chave OPENAI_API_KEY não foi configurada corretamente."
         
     if not mensagens:
@@ -86,7 +86,7 @@ def gerar_insights_gestor(
         prompt_final = f"Erro no template de prompt: {e}\n\nDados: {textos_mensagens}"
 
     try:
-        resp = client.chat.completions.create(
+        resp = _get_client().chat.completions.create(
             model=modelo,
             messages=[
                 {"role": "system", "content": "Você é um consultor sênior focado em relatórios de CX."},
@@ -107,7 +107,7 @@ def gerar_feedback_usuario_realtime(
     """
     Gera feedback direto para o usuário utilizando 'prompt_feedback_usuario.md'.
     """
-    if not client:
+    if not _get_client():
         return "⚠️ A chave OPENAI_API_KEY não foi configurada."
         
     if not mensagens:
@@ -127,7 +127,7 @@ def gerar_feedback_usuario_realtime(
         prompt_final = f"Erro no template: {e}\n\nÚltimas mensagens: {textos_mensagens}"
 
     try:
-        resp = client.chat.completions.create(
+        resp = _get_client().chat.completions.create(
             model=modelo,
             messages=[
                 {"role": "system", "content": "Você é um Analista de IA que fornece feedback instantâneo."},

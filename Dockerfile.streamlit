@@ -29,6 +29,7 @@ COPY app.py .
 # Copia pastas necessárias
 COPY prompt/ ./prompt/
 COPY pages/ ./pages/
+COPY .streamlit/ ./.streamlit/
 
 EXPOSE 8502
 

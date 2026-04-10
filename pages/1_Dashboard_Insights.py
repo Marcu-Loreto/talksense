@@ -1,14 +1,9 @@
 
-# --- INÍCIO HACK DE COMPATIBILIDADE DE PATH ---
-import sys, os
-_local_path = r"C:\Users\marcu\AppData\Local\Programs\Python\Python313\Lib\site-packages"
-if os.path.exists(_local_path) and _local_path not in sys.path:
-    sys.path.append(_local_path)
 # Garante que a raiz do projeto está no path (para imports de módulos locais)
+import sys, os
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
-# --- FIM HACK DE COMPATIBILIDADE DE PATH ---
 
 import os
 import streamlit as st

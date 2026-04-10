@@ -1,12 +1,5 @@
 # app.py
 
-# --- INÍCIO HACK DE COMPATIBILIDADE DE PATH ---
-import sys, os
-_local_path = r"C:\Users\marcu\AppData\Local\Programs\Python\Python313\Lib\site-packages"
-if os.path.exists(_local_path) and _local_path not in sys.path:
-    sys.path.append(_local_path)
-# --- FIM HACK DE COMPATIBILIDADE DE PATH ---
-
 import os
 import streamlit as st
 from dotenv import load_dotenv
@@ -225,14 +218,19 @@ def get_messages_from_api(session_id: str):
     return SharedState.get_messages(session_id)
 
 if not OPENAI_API_KEY:
-    st.error("🔒 OPENAI_API_KEY não encontrada. Defina no arquivo .env")
-    st.stop()
+    _openai_key_missing = True
+else:
+    _openai_key_missing = False
 
-if not OPENAI_API_KEY.startswith("sk-"):
-    st.error("🔒 OPENAI_API_KEY inválida. Deve começar com 'sk-'")
-    st.stop()
+if not _openai_key_missing and not OPENAI_API_KEY.startswith("sk-"):
+    _openai_key_invalid = True
+else:
+    _openai_key_invalid = False
 
-client = get_openai_client(OPENAI_API_KEY)
+if not _openai_key_missing and not _openai_key_invalid:
+    client = get_openai_client(OPENAI_API_KEY)
+else:
+    client = None
 
 
 def obter_mensagens_completas():
@@ -886,9 +884,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-# Logo após st.set_page_config
-# st.set_page_config(...)
 
+# Validação da API Key (após set_page_config)
+if _openai_key_missing:
+    st.error("🔒 OPENAI_API_KEY não encontrada. Defina no arquivo .env ou nas variáveis de ambiente.")
+    st.stop()
+
+if _openai_key_invalid:
+    st.error("🔒 OPENAI_API_KEY inválida. Deve começar com 'sk-'")
+    st.stop()
 # ADICIONAR AQUI:
 # Limpa cache na inicialização
 if "cache_cleared" not in st.session_state:
