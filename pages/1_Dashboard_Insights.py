@@ -298,29 +298,27 @@ if st.sidebar.button("🧠 Gerar Relatório de Insights", type="primary", use_co
     st.session_state.ultimo_contexto_analisado = todas_mensagens_str
     
     with st.sidebar.status("Analisando mensagens selecionadas...", expanded=True) as status:
-        # Prepara contexto base do filtrado
         mensagens_amostra = filtrado["texto"].dropna().tail(30).tolist()
         todas_palavras = " ".join(filtrado["texto"].dropna().tolist()).lower().split()
         palavras_filtro = [p for p in todas_palavras if len(p) > 4]
         from collections import Counter
         palavras_frequentes_nuvem = [word for word, count in Counter(palavras_filtro).most_common(25)]
         
-        # Chama nosso novo agente exportado via import (do insights_agent.py)
-        # O gerar_insights_gestor vai retornar a string formatada
         try:
             relatorio = gerar_insights_gestor(
                 mensagens=mensagens_amostra, 
-                sentimentos=[], # O agente agora foca nas palavras
+                sentimentos=[],
                 palavras_frequentes=palavras_frequentes_nuvem
             )
-            # Salva no PostgreSQL
             if Database:
                 Database.add_insight(", ".join(palavras_frequentes_nuvem), relatorio)
-                
-            st.session_state.insights_chat.append({"role": "assistant", "content": f"**⚡ ANÁLISE AUTOMÁTICA EM TEMPO REAL ⚡**\n\n{relatorio}"})
-            st.rerun() # Atualiza a tela imediatamente para desenhar a mensagem na sidebar
+            
+            # Salva no session_state para exibir na área principal (abaixo do grafo)
+            st.session_state["ultimo_relatorio_insights"] = relatorio
+            st.session_state.insights_chat.append({"role": "assistant", "content": f"**⚡ ANÁLISE ⚡**\n\n{relatorio}"})
+            status.update(label="Concluído!", state="complete")
         except Exception as e:
-            st.error(f"Erro ao gerar análise: {e}")
+            st.sidebar.error(f"Erro ao gerar análise: {e}")
             status.update(label="Erro!", state="error")
 
 
@@ -507,6 +505,12 @@ elif _token_sequences and len(_token_sequences) > 0:
         st.warning(f"Erro ao gerar grafo: {e}")
 else:
     st.info("Sem dados suficientes para gerar o grafo.")
+
+# ======= RELATÓRIO DE INSIGHTS (área principal) =======
+if st.session_state.get("ultimo_relatorio_insights"):
+    st.divider()
+    st.subheader("🧠 Relatório Estratégico de Insights")
+    st.markdown(st.session_state["ultimo_relatorio_insights"])
 
 # ======= EVOLUÇÃO DO SENTIMENTO NO TEMPO =======
 st.subheader("📈 Evolução do Sentimento no Tempo")
