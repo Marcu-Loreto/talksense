@@ -206,13 +206,6 @@ st.sidebar.divider()
 # Inicializa o histórico de chat da barra lateral na sessão
 if "insights_chat" not in st.session_state:
     st.session_state.insights_chat = []
-    
-    # Ao iniciar, recupera os últimos do PostgreSQL
-    if Database:
-        historico_db = Database.get_latest_insights(limit=5)
-        # O histórico vem do mais novo para o mais velho (DESC)
-        for h in reversed(historico_db):
-            st.session_state.insights_chat.append({"role": "assistant", "content": h["insight_text"]})
 
 # Exibe as mensagens do histórico na barra lateral
 for msg in st.session_state.insights_chat:
@@ -315,7 +308,6 @@ if st.sidebar.button("🧠 Gerar Relatório de Insights", type="primary", use_co
             
             # Salva no session_state para exibir na área principal (abaixo do grafo)
             st.session_state["ultimo_relatorio_insights"] = relatorio
-            st.session_state.insights_chat.append({"role": "assistant", "content": f"**⚡ ANÁLISE ⚡**\n\n{relatorio}"})
             status.update(label="Concluído!", state="complete")
         except Exception as e:
             st.sidebar.error(f"Erro ao gerar análise: {e}")
